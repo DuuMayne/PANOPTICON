@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.evaluators.base import EvaluatorBase
 from app.evaluators.mfa_enforced import MfaEnforcedEvaluator
 from app.connectors.base import ConnectorBase, MockConnector
