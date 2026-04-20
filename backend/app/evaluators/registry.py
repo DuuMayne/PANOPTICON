@@ -4,8 +4,10 @@ import logging
 
 from app.evaluators.base import EvaluatorBase
 from app.evaluators.mfa_enforced import MfaEnforcedEvaluator
+from app.evaluators.inactive_users import InactiveUsersEvaluator
 from app.evaluators.branch_protection import BranchProtectionEvaluator
 from app.evaluators.no_direct_push import NoDirectPushEvaluator
+from app.evaluators.audit_logging import AuditLoggingEvaluator
 from app.connectors.base import ConnectorBase, MockConnector
 from app.config import settings
 
@@ -14,8 +16,10 @@ logger = logging.getLogger("panopticon.registry")
 # Maps evaluator_type string -> evaluator class
 EVALUATOR_REGISTRY: dict[str, type[EvaluatorBase]] = {
     "mfa_enforced": MfaEnforcedEvaluator,
+    "no_inactive_users": InactiveUsersEvaluator,
     "branch_protection": BranchProtectionEvaluator,
     "no_direct_push": NoDirectPushEvaluator,
+    "audit_logging": AuditLoggingEvaluator,
 }
 
 
@@ -37,8 +41,8 @@ def get_connector(connector_type: str) -> ConnectorBase:
         return GitHubConnector()
 
     if connector_type == "aws" and settings.aws_access_key_id:
-        # AWS connector added in Phase 3
-        pass
+        from app.connectors.aws import AWSConnector
+        return AWSConnector()
 
     logger.info(f"No credentials for {connector_type}, using mock connector")
     return MockConnector(_get_mock_data(connector_type))
