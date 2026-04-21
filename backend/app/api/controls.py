@@ -16,6 +16,29 @@ from app.scheduler import run_control
 class UpdateCadenceRequest(BaseModel):
     cadence_seconds: int
 
+
+class CreateControlRequest(BaseModel):
+    key: str
+    name: str
+    description: str = ""
+    owner: str = ""
+    connector_type: str
+    evaluator_type: str
+    config_json: dict = {}
+    cadence_seconds: int = 21600
+    enabled: bool = True
+
+
+class UpdateControlRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    owner: str | None = None
+    connector_type: str | None = None
+    evaluator_type: str | None = None
+    config_json: dict | None = None
+    cadence_seconds: int | None = None
+    enabled: bool | None = None
+
 router = APIRouter(prefix="/controls", tags=["controls"])
 
 
@@ -28,6 +51,34 @@ def list_controls(db: Session = Depends(get_db)):
         .all()
     )
     return controls
+
+
+@router.post("", response_model=ControlDetail, status_code=201)
+def create_control(body: CreateControlRequest, db: Session = Depends(get_db)):
+    """Create a new control definition."""
+    existing = db.query(Control).filter(Control.key == body.key).first()
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Control with key '{body.key}' already exists")
+
+    control = Control(
+        key=body.key,
+        name=body.name,
+        description=body.description,
+        owner=body.owner,
+        connector_type=body.connector_type,
+        evaluator_type=body.evaluator_type,
+        config_json=body.config_json,
+        cadence_seconds=body.cadence_seconds,
+        enabled=body.enabled,
+    )
+    db.add(control)
+    db.flush()
+
+    state = ControlCurrentState(control_id=control.id, current_status="pending")
+    db.add(state)
+    db.commit()
+    db.refresh(control)
+    return control
 
 
 @router.get("/{control_id}", response_model=ControlDetail)
@@ -65,6 +116,39 @@ def get_latest_run(control_id: UUID, db: Session = Depends(get_db)):
         .first()
     )
     return run
+
+
+@router.put("/{control_id}", response_model=ControlDetail)
+def update_control(control_id: UUID, body: UpdateControlRequest, db: Session = Depends(get_db)):
+    """Update a control's configuration."""
+    control = db.query(Control).filter(Control.id == control_id).first()
+    if not control:
+        raise HTTPException(status_code=404, detail="Control not found")
+
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(control, field, value)
+    control.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(control)
+    return control
+
+
+@router.delete("/{control_id}", response_model=dict)
+def delete_control(control_id: UUID, db: Session = Depends(get_db)):
+    """Delete a control and all its run history."""
+    control = db.query(Control).filter(Control.id == control_id).first()
+    if not control:
+        raise HTTPException(status_code=404, detail="Control not found")
+
+    # Delete in order: failures -> runs -> state -> control
+    run_ids = [r.id for r in db.query(ControlRun).filter(ControlRun.control_id == control_id).all()]
+    if run_ids:
+        db.query(ControlFailure).filter(ControlFailure.control_run_id.in_(run_ids)).delete(synchronize_session=False)
+    db.query(ControlRun).filter(ControlRun.control_id == control_id).delete(synchronize_session=False)
+    db.query(ControlCurrentState).filter(ControlCurrentState.control_id == control_id).delete(synchronize_session=False)
+    db.delete(control)
+    db.commit()
+    return {"message": f"Deleted control {control.key}"}
 
 
 @router.post("/{control_id}/run", response_model=dict)
